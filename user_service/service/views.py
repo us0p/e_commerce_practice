@@ -1,8 +1,9 @@
+from datetime import datetime
 import json
 import hashlib
+from os import getenv
 
 from django.core.exceptions import ValidationError
-from django.core.serializers import serialize
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -10,29 +11,39 @@ from django.http import (
     HttpResponseNotFound,
 )
 
+import jwt
+
+from .exceptions import MissingRequiredFields
+from .utils import has_required_fields
+
 from .models import Users
 
 
 def create(req: HttpRequest):
     body = json.loads(req.body)
-    if "confirm_password" not in body:
-        return HttpResponseBadRequest(
-            json.dumps({"error": "confirm_password is required"}).encode("utf-8")
-        )
-    if "password" not in body:
-        return HttpResponseBadRequest(
-            json.dumps({"error": "password is required"}).encode("utf-8")
-        )
-
-    if body["password"] != body["confirm_password"]:
-        return HttpResponseBadRequest(
-            json.dumps({"error": "password doesn't match"}).encode("utf-8")
-        )
-
-    hashed_pass = hashlib.sha256()
-    hashed_pass.update(str(body.get("password")).encode("utf-8"))
-
     try:
+        has_required_fields(
+            [
+                "name",
+                "email",
+                "address",
+                "phone",
+                "password",
+                "confirm_password",
+            ],
+            body,
+        )
+
+        if body["password"] != body["confirm_password"]:
+            return HttpResponseBadRequest(
+                json.dumps({"error": "passwords doesn't match"}).encode(
+                    "utf-8"
+                )
+            )
+
+        hashed_pass = hashlib.sha256()
+        hashed_pass.update(str(body.get("password")).encode("utf-8"))
+
         user = Users(
             name=body.get("name"),
             email=body.get("email"),
@@ -44,23 +55,67 @@ def create(req: HttpRequest):
         user.save()
 
         return HttpResponse(
-            json.dumps({"success": f"user id: {user.id} created"}).encode("utf-8"),
+            json.dumps({"success": "user created"}).encode("utf-8"),
             status=201,
+        )
+    except MissingRequiredFields as e:
+        return HttpResponseBadRequest(
+            json.dumps(
+                {"error": "missing required fields", "fields": e.fields}
+            ).encode("utf-8")
         )
     except ValidationError as e:
         return HttpResponseBadRequest(
             json.dumps(
-                {"errors": [f"{v[0]} {k}" for k, v in e.message_dict.items()]}
+                {
+                    "error": "duplicated info error",
+                    "info": [v[0] for v in e.message_dict.values()],
+                }
             ).encode("utf-8")
         )
 
 
-def get(req: HttpRequest, user_id: int):
-    user = Users.objects.filter(id=user_id)
-
-    if user is None:
+def get(_: HttpRequest, user_id: int):
+    try:
+        user = Users.objects.get(id=user_id)
+    except Users.DoesNotExist:
         return HttpResponseNotFound(
-            json.dumps({"error": f"{user_id} doesn't exist"}).encode("utf-8")
+            json.dumps(
+                {"error": f"user with ID {user_id} doesn't exist"}
+            ).encode("utf-8")
         )
 
-    return HttpResponse(serialize("json", user))
+    return HttpResponse(json.dumps(user.get_public_info()).encode("utf-8"))
+
+
+def login(req: HttpRequest):
+    body = json.loads(req.body)
+    if "email" not in body:
+        return HttpResponseBadRequest(
+            json.dumps({"error": "email is required"}).encode("utf-8")
+        )
+
+    if "password" not in body:
+        return HttpResponseBadRequest(
+            json.dumps({"error": "password is required"}).encode("utf-8")
+        )
+
+    hashed_pass = hashlib.sha256()
+    hashed_pass.update(str(body["password"]).encode("utf-8"))
+
+    try:
+        user = Users.objects.get(
+            email=body["email"], password=hashed_pass.hexdigest()
+        )
+    except Users.DoesNotExist:
+        return HttpResponseNotFound(
+            json.dumps({"error": "invalid credentials"}).encode("utf-8")
+        )
+
+    token = jwt.encode(
+        user.get_public_info(),
+        getenv("SECRET"),
+        algorithm="HS256",
+        headers={"exp": datetime.now().toordinal() + 7},
+    )
+    return HttpResponse(json.dumps({"token": token}).encode("utf-8"))

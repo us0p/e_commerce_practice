@@ -13,3 +13,12 @@ class Users(models.Model):
     address = models.CharField(validators=[validate_required])
     phone = models.CharField(unique=True, validators=[validate_required])
     password = models.CharField(validators=[validate_required])
+
+    def get_public_info(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "email": self.email,
+            "address": self.address,
+            "phone": self.phone,
+        }
