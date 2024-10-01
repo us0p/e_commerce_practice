@@ -81,7 +81,7 @@ class TestCreate(TestCase):
             json.dumps({"success": "user created"}).encode("utf-8"),
         )
 
-        created_user = Users._default_manager.get(email="test@mail.com")
+        created_user = Users.objects.get(email="test@mail.com")
         if created_user is None:
             raise Exception("user wasn't stored to the database.")
 
