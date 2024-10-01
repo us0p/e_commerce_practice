@@ -90,26 +90,30 @@ def get(_: HttpRequest, user_id: int):
 
 def login(req: HttpRequest):
     body = json.loads(req.body)
-    if "email" not in body:
-        return HttpResponseBadRequest(
-            json.dumps({"error": "email is required"}).encode("utf-8")
-        )
-
-    if "password" not in body:
-        return HttpResponseBadRequest(
-            json.dumps({"error": "password is required"}).encode("utf-8")
-        )
-
-    hashed_pass = hashlib.sha256()
-    hashed_pass.update(str(body["password"]).encode("utf-8"))
-
     try:
+        has_required_fields(
+            [
+                "email",
+                "password",
+            ],
+            body,
+        )
+
+        hashed_pass = hashlib.sha256()
+        hashed_pass.update(str(body["password"]).encode("utf-8"))
+
         user = Users.objects.get(
             email=body["email"], password=hashed_pass.hexdigest()
         )
     except Users.DoesNotExist:
         return HttpResponseNotFound(
             json.dumps({"error": "invalid credentials"}).encode("utf-8")
+        )
+    except MissingRequiredFields as e:
+        return HttpResponseBadRequest(
+            json.dumps(
+                {"error": "missing required fields", "fields": e.fields}
+            ).encode("utf-8")
         )
 
     token = jwt.encode(

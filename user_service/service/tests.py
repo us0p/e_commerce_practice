@@ -6,7 +6,7 @@ from django.test import TestCase, RequestFactory
 from django.urls import reverse
 
 from .models import Users
-from .views import create
+from .views import create, get, login
 from .utils import has_required_fields
 from .exceptions import MissingRequiredFields
 
@@ -191,3 +191,121 @@ class TestCreate(TestCase):
                     "fields": [req["field_missing"]],
                 },
             )
+
+
+class TestGetUser(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_get_unexisting_user(self):
+        request = self.factory.get(path=reverse("service:get", args=(2,)))
+        res = get(request, 3)  # created entries are deleted after each
+        # TestCase execution, previous TestCase created 2 Users, that's
+        # why we search for user_id 3.
+
+        self.assertEqual(res.status_code, 404)
+        self.assertEqual(
+            res.content,
+            json.dumps({"error": "user with ID 3 doesn't exist"}).encode(
+                "utf-8"
+            ),
+        )
+
+    def test_get_user(self):
+        mock_user = Users(
+            name="test",
+            email="test@mail.com",
+            address="test address",
+            phone="12345678",
+            password="-9823yna;kdfjbhasd8y23",
+        )
+
+        mock_user.save()
+        request = self.factory.get(path=reverse("service:get", args=(1,)))
+        res = get(request, 3)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(
+            res.content,
+            json.dumps(mock_user.get_public_info()).encode("utf-8"),
+        )
+
+
+class TestLogin(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_required_fieds(self):
+        req_bodies = [
+            {
+                "body": {
+                    "email": "test@mail.com",
+                },
+                "field_missing": "password",
+            },
+            {
+                "body": {
+                    "password": "test",
+                },
+                "field_missing": "email",
+            },
+        ]
+
+        for req in req_bodies:
+            request = self.factory.post(
+                path=reverse("service:login"),
+                data=json.dumps(req["body"]).encode("utf-8"),
+                content_type="application/json",
+            )
+            res = login(request)
+            self.assertEqual(res.status_code, 400)
+            self.assertEqual(
+                json.loads(res.content),
+                {
+                    "error": "missing required fields",
+                    "fields": [req["field_missing"]],
+                },
+            )
+
+    def test_invalid_credentials(self):
+        request = self.factory.post(
+            path=reverse("service:login"),
+            data=json.dumps(
+                {"email": "test@mail.com", "password": "1234"}
+            ).encode("utf-8"),
+            content_type="application/json",
+        )
+        res = login(request)
+        self.assertEqual(res.status_code, 404)
+        self.assertEqual(
+            res.content,
+            json.dumps({"error": "invalid credentials"}).encode("utf-8"),
+        )
+
+    def test_login_user(self):
+        create_user_request = self.factory.post(
+            path=reverse("service:create"),
+            data=json.dumps(
+                {
+                    "name": "test",
+                    "email": "test@mail.com",
+                    "address": "test",
+                    "phone": "test",
+                    "password": "1234",
+                    "confirm_password": "1234",
+                }
+            ).encode("utf-8"),
+            content_type="application/json",
+        )
+        create(create_user_request)
+
+        login_request = self.factory.post(
+            path=reverse("service:login"),
+            data=json.dumps(
+                {"email": "test@mail.com", "password": "1234"}
+            ).encode("utf-8"),
+            content_type="application/json",
+        )
+        res = login(login_request)
+        body = json.loads(res.content)
+        self.assertEqual(res.status_code, 200)
+        self.assertIsNotNone(body.get("token"))
