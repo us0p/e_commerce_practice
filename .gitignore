@@ -2,3 +2,4 @@ curl.txt
 psql
 venv
 __pycache__
+.env
